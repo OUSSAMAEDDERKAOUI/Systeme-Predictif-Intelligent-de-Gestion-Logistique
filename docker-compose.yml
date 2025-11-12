@@ -1,0 +1,30 @@
+# Fichier: docker-compose.yml
+services:
+  # Service 1: Renommé de 'etl-batch' à 'spark-lab'
+  spark-lab:
+    build: ./spark_job
+    container_name: dataco-spark-lab
+    ports:
+      # Connecte le port 8888 de votre PC au port 8888 du conteneur
+      - "8888:8888"
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      # --- AJOUTS IMPORTANTS ---
+      # Ces volumes permettent de voir vos modifications de code
+      # en direct, sans avoir à 're-build' l'image.
+      - ./spark_job/src:/app/src
+      - ./spark_job/notebooks:/app/notebooks
+    
+    # On enlève 'command:' car il est maintenant dans le Dockerfile
+
+  # Service 2: Reste identique
+  dashboard:
+    build: ./streamlit_app
+    container_name: dataco-streamlit
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./models:/app/models
+      # (Optionnel) Vous pouvez aussi ajouter un volume pour le code de Streamlit:
+      # - ./streamlit_app:/app

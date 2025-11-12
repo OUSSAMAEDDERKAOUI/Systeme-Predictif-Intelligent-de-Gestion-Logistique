@@ -1,0 +1,4 @@
+# Liste des dépendances (ajoutez les versions si souhaité)
+# pyspark
+# streamlit
+# pandas
