@@ -1,0 +1,19 @@
+# Fichier: .gitignore
+
+# Ne jamais 'commiter' les données ou les modèles
+/data/
+/models/
+
+# Fichiers de cache Python
+__pycache__/
+*.pyc
+
+# Fichiers de checkpoint Jupyter
+.ipynb_checkpoints/
+
+# Environnements virtuels
+venv/
+.venv/
+
+# Fichiers système
+.DS_Store
