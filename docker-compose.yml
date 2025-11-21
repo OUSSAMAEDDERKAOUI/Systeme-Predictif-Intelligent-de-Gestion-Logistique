@@ -1,30 +1,173 @@
-# Fichier: docker-compose.yml
+# # Fichier: docker-compose.yml
+# services:
+#   # Service 1: Renommé de 'etl-batch' à 'spark-lab'
+#   spark-lab:
+#     build: ./spark_job
+#     container_name: dataco-spark-lab
+#     ports:
+#       # Connecte le port 8888 de votre PC au port 8888 du conteneur
+#       - "8888:8888"
+#     volumes:
+#       - ./data:/app/data
+#       - ./models:/app/models
+#       # --- AJOUTS IMPORTANTS ---
+#       # Ces volumes permettent de voir vos modifications de code
+#       # en direct, sans avoir à 're-build' l'image.
+#       - ./spark_job/src:/app/src
+#       - ./spark_job/notebooks:/app/notebooks
+    
+#     # On enlève 'command:' car il est maintenant dans le Dockerfile
+
+#   # Service 2: Reste identique
+#   dashboard:
+#     build: ./streamlit_app
+#     container_name: dataco-streamlit
+#     ports:
+#       - "8501:8501"
+#     volumes:
+#       - ./models:/app/models
+#       # (Optionnel) Vous pouvez aussi ajouter un volume pour le code de Streamlit:
+#       # - ./streamlit_app:/app
+
+
+
+version: '3.8'
+
 services:
-  # Service 1: Renommé de 'etl-batch' à 'spark-lab'
+  # --- 1. SPARK LAB (Modifié pour inclure les JARs) ---
   spark-lab:
     build: ./spark_job
     container_name: dataco-spark-lab
     ports:
-      # Connecte le port 8888 de votre PC au port 8888 du conteneur
-      - "8888:8888"
+      - "8888:8888" # Jupyter
+      - "4040:4040" # Spark UI
     volumes:
       - ./data:/app/data
       - ./models:/app/models
-      # --- AJOUTS IMPORTANTS ---
-      # Ces volumes permettent de voir vos modifications de code
-      # en direct, sans avoir à 're-build' l'image.
-      - ./spark_job/src:/app/src
-      - ./spark_job/notebooks:/app/notebooks
-    
-    # On enlève 'command:' car il est maintenant dans le Dockerfile
+      - ./spark_job/src:/app/src           # Code en direct
+      - ./spark_job/notebooks:/app/notebooks # Notebooks en direct
+    environment:
+      # C'est ici qu'on dit à Spark d'utiliser les JARs qu'on a téléchargés dans le Dockerfile
+      - SPARK_JARS=/app/jars/postgresql-42.2.18.jar,/app/jars/mongo-spark-connector_2.12-3.0.1.jar,/app/jars/mongo-java-driver-3.12.10.jar
+    networks:
+      - dataco-network
 
-  # Service 2: Reste identique
+  # --- 2. FASTAPI & GÉNÉRATEUR DE DONNÉES ---
+  fastapi:
+    build: ./fastapi_app
+    container_name: dataco-fastapi
+    ports:
+      - "8000:8000"
+      - "9999:9999" # Port TCP crucial pour le streaming
+    volumes:
+      - ./fastapi_app:/app # Pour modifier le code en direct
+    networks:
+      - dataco-network
+    # Commande pour lancer l'API (ajustez selon le nom de votre fichier python, ex: main.py)
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+  # --- 3. BASES DE DONNÉES ---
+  postgres:
+    image: postgres:13
+    container_name: dataco-postgres
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: dataco_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres_init:/docker-entrypoint-initdb.d
+    networks:
+      - dataco-network
+
+  mongodb:
+    image: mongo:latest
+    container_name: dataco-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - dataco-network
+
+  # --- 4. DASHBOARD STREAMLIT ---
   dashboard:
     build: ./streamlit_app
     container_name: dataco-streamlit
     ports:
       - "8501:8501"
+    depends_on:
+      - mongodb
+    environment:
+      - MONGO_HOST=dataco-mongodb
+      - MONGO_USER=admin
+      - MONGO_PASSWORD=password
     volumes:
+      - ./streamlit_app:/app # Code en direct
       - ./models:/app/models
-      # (Optionnel) Vous pouvez aussi ajouter un volume pour le code de Streamlit:
-      # - ./streamlit_app:/app
+    networks:
+      - dataco-network
+
+  # --- 5. AIRFLOW (Orchestration) ---
+  airflow:
+    image: apache/airflow:2.6.0
+    container_name: dataco-airflow
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://user:password@postgres/airflow_db
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__WEBSERVER__SECRET_KEY=demo_key
+    ports:
+      - "8081:8080" # Port Webserver Airflow
+    volumes:
+      - ./dags:/opt/airflow/dags
+    depends_on:
+      - postgres
+    networks:
+      - dataco-network
+    # Commande d'initialisation rapide (pour dev)
+    command: bash -c "airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com && (airflow scheduler & airflow webserver)"
+
+# --- AJOUT : INTERFACES VISUELLES ---
+
+  # Interface pour PostgreSQL (http://localhost:5050)
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: dataco-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@dataco.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - dataco-network
+
+  # Interface pour MongoDB (http://localhost:8082)
+  mongo-express:
+    image: mongo-express
+    container_name: dataco-mongo-express
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: admin
+      ME_CONFIG_MONGODB_ADMINPASSWORD: password
+      ME_CONFIG_MONGODB_URL: mongodb://admin:password@mongodb:27017/
+      ME_CONFIG_BASICAUTH: "false"
+    ports:
+      - "8082:8081" # On utilise 8082 car 8081 est pris par Airflow
+    depends_on:
+      - mongodb
+    networks:
+      - dataco-network
+networks:
+  dataco-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  mongo_data:
