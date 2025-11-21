@@ -1,4 +1,9 @@
 # Fichier: .gitignore
+# Ignore Spark ML models
+spark_job/**/models/
+**/models/
+**/*.parquet
+**/*.crc
 
 # Ne jamais 'commiter' les données ou les modèles
 /data/
